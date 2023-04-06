@@ -37,6 +37,10 @@ make
 ./webbench-1.5/webbench -c 10000 -t 10 http://ip:port/
 ```
 
+```
+or use ./webbench-c11/webbench
+```
+
 ## 性能表现
 
 |      |  10   |  100  | 1000  | 10000 |

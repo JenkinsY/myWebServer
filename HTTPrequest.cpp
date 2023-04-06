@@ -116,22 +116,27 @@ void HTTPrequest::parsePost_() {
         int n = body_.size();
         int i = 0, j = 0;
 
+        // 遍历 POST 请求的 body 部分
         for(; i < n; i++) {
             char ch = body_[i];
             switch (ch) {
+            // 如果当前字符为等号，说明接下来的字符串为 key，需要进行截取
             case '=':
                 key = body_.substr(j, i - j);
                 j = i + 1;
                 break;
+            // 如果当前字符为加号，需要将其替换为一个空格
             case '+':
                 body_[i] = ' ';
                 break;
+            // 如果当前字符为百分号，说明接下来的两个字符为一个十六进制数，需要进行转换
             case '%':
                 num = convertHex(body_[i + 1]) * 16 + convertHex(body_[i + 2]);
                 body_[i + 2] = num % 10 + '0';
                 body_[i + 1] = num / 10 + '0';
                 i += 2;
                 break;
+            // 如果当前字符为 &，说明接下来的字符串为 value，需要进行截取并存储
             case '&':
                 value = body_.substr(j, i - j);
                 j = i + 1;
@@ -141,6 +146,7 @@ void HTTPrequest::parsePost_() {
                 break;
             }
         }
+        // 处理最后一个键值对
         assert(j <= i);
         if(post_.count(key) == 0 && j < i) {
             value = body_.substr(j, i - j);

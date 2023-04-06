@@ -116,11 +116,13 @@ ssize_t Buffer::readFd(int fd,int* Errno)
     struct iovec iov[2];
     const size_t writable=writeableBytes();
 
+    // buff 为暂存区，buffer写满后会往buff中写
     iov[0].iov_base=BeginPtr_()+writePos_;
     iov[0].iov_len=writable;
     iov[1].iov_base=buff;
     iov[1].iov_len=sizeof(buff);
 
+    // readv会将读取的数据往iov中填充，iov[0]填满后往iov[1]继续填充
     const ssize_t len=readv(fd,iov,2);
     if(len<0)
     {
@@ -131,6 +133,7 @@ ssize_t Buffer::readFd(int fd,int* Errno)
     {
         writePos_+=len;
     }
+    // 此时writePos_指向buffer尾部，将buff中数据写进buffer中会导致扩容
     else{
         writePos_=buffer_.size();
         append(buff,len-writable);
@@ -164,6 +167,7 @@ char* Buffer::BeginPtr_()
     return &*buffer_.begin();
 }
 
+// 区分迭代器和指针的区别
 const char* Buffer::BeginPtr_() const
 {
     return &*buffer_.begin();

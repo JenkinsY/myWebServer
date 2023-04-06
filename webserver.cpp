@@ -52,6 +52,8 @@ void WebServer::initEventMode_(int trigMode) {
     HTTPconnection::isET = (connectionEvent_ & EPOLLET);
 }
 
+/* epoll循环监听事件，根据事件类型调用相应方法 */
+// 延迟计算思想，方法及参数会被打包放到线程池的任务队列中
 void WebServer::Start()
 {
     int timeMS=-1;//epoll wait timeout==-1就是无事件一直阻塞
@@ -64,30 +66,42 @@ void WebServer::Start()
     }
     while(!isClose_)
     {
+        // 返回下一个计时器超时的时间
         if(timeoutMS_>0)
         {
             timeMS=timer_->getNextHandle();
         }
+        /* 利用 epoll 的 time_wait 实现定时功能 */
+        // 在计时器超时前唤醒一次 epoll ，判断是否有新事件到达
+        // 如果没有新事件，下次调用 getNextHandle 时，会将超时的堆顶计时器删除
         int eventCnt=epoller_->wait(timeMS);
+        // 遍历事件表
         for(int i=0;i<eventCnt;++i)
         {
+            // 事件套接字 事件内容
             int fd=epoller_->getEventFd(i);
             uint32_t events=epoller_->getEvents(i);
 
+            // 监听套接字只有连接事件
             if(fd==listenFd_)
             {
                 handleListen_();
                 //std::cout<<fd<<" is listening!"<<std::endl;
             }
+
+            /* 连接套接字几种事件 */
+            // 对端关闭连接
             else if(events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
                 assert(users_.count(fd) > 0);
                 closeConn_(&users_[fd]);
             }
+            // 读事件
             else if(events & EPOLLIN) {
                 assert(users_.count(fd) > 0);
                 handleRead_(&users_[fd]);
                 //std::cout<<fd<<" reading end!"<<std::endl;
             }
+            // 写事件
             else if(events & EPOLLOUT) {
                 assert(users_.count(fd) > 0);
                 handleWrite_(&users_[fd]);
@@ -99,6 +113,7 @@ void WebServer::Start()
     }
 }
 
+/* 发送错误 */
 void WebServer::sendError_(int fd, const char* info)
 {
     assert(fd>0);
@@ -110,6 +125,7 @@ void WebServer::sendError_(int fd, const char* info)
     close(fd);
 }
 
+/* 关闭连接套接字，并从epoll事件表中删除相应事件 */
 void WebServer::closeConn_(HTTPconnection* client)
 {
     assert(client);
@@ -118,18 +134,24 @@ void WebServer::closeConn_(HTTPconnection* client)
     client->closeHTTPConn();
 }
 
+/* 为连接注册事件和设置计时器 */
 void WebServer::addClientConnection(int fd, sockaddr_in addr)
 {
     assert(fd>0);
+    // users 是哈希表，套接字是键，HttpConnect 对象是值
+    // 将 fd 和连接地址传入,初始化 HttpConnect 对象，用 client 表示
     users_[fd].initHTTPConn(fd,addr);
+    // 添加计时器，到期关闭连接
     if(timeoutMS_>0)
     {
         timer_->addTimer(fd,timeoutMS_,std::bind(&WebServer::closeConn_,this,&users_[fd]));
     }
     epoller_->addFd(fd,EPOLLIN | connectionEvent_);
+    // 套接字设置非阻塞
     setFdNonblock(fd);
 }
 
+/* 新建连接套接字，ET模式会一次将连接队列读完 */
 void WebServer::handleListen_() {
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
@@ -145,19 +167,24 @@ void WebServer::handleListen_() {
     } while(listenEvent_ & EPOLLET);
 }
 
+/* 将读函数和参数用std::bind绑定，加入线程池的任务队列 */
 void WebServer::handleRead_(HTTPconnection* client) {
     assert(client);
     extentTime_(client);
+    // 非静态成员函数需要传递this指针作为第一个参数
     threadpool_->submit(std::bind(&WebServer::onRead_, this, client));
 }
 
+/* 将写函数和参数用std::bind绑定，加入线程池的任务队列 */
 void WebServer::handleWrite_(HTTPconnection* client)
 {
     assert(client);
     extentTime_(client);
+    // 非静态成员函数需要传递this指针作为第一个参数
     threadpool_->submit(std::bind(&WebServer::onWrite_, this, client));
 }
 
+/* 重置计时器 */
 void WebServer::extentTime_(HTTPconnection* client)
 {
     assert(client);
@@ -167,6 +194,7 @@ void WebServer::extentTime_(HTTPconnection* client)
     }
 }
 
+/* 读函数：先接收再处理 */
 void WebServer::onRead_(HTTPconnection* client) 
 {
     assert(client);
@@ -174,6 +202,8 @@ void WebServer::onRead_(HTTPconnection* client)
     int readErrno = 0;
     ret = client->readBuffer(&readErrno);
     //std::cout<<ret<<std::endl;
+
+    // 客户端发送EOF
     if(ret <= 0 && readErrno != EAGAIN) {
         //std::cout<<"do not read data!"<<std::endl;
         closeConn_(client);
@@ -182,6 +212,9 @@ void WebServer::onRead_(HTTPconnection* client)
     onProcess_(client);
 }
 
+/* 处理函数：判断读入的请求报文是否完整，决定是继续监听读还是监听写 */
+// 如果请求不完整，继续读，如果请求完整，则根据请求内容生成相应的响应报文，并发送
+// oneshot需要再次监听
 void WebServer::onProcess_(HTTPconnection* client) 
 {
     if(client->handleHTTPConn()) {
@@ -192,6 +225,8 @@ void WebServer::onProcess_(HTTPconnection* client)
     }
 }
 
+/* 写函数：发送响应报文，大文件需要分多次发送 */
+// 由于设置了oneshot，需要再次监听读
 void WebServer::onWrite_(HTTPconnection* client) {
     assert(client);
     int ret = -1;
@@ -204,15 +239,19 @@ void WebServer::onWrite_(HTTPconnection* client) {
             return;
         }
     }
+    // 发送失败
     else if(ret < 0) {
+        // 缓存满导致的，继续监听写
         if(writeErrno == EAGAIN) {
             /* 继续传输 */
             epoller_->modFd(client->getFd(), connectionEvent_ | EPOLLOUT);
             return;
         }
     }
+    // 其他原因导致，关闭连接
     closeConn_(client);
 }
+
 bool WebServer::initSocket_() {
     int ret;
     struct sockaddr_in addr;
@@ -230,12 +269,14 @@ bool WebServer::initSocket_() {
         optLinger.l_linger = 1;
     }
 
+    // 创建监听套接字
     listenFd_ = socket(AF_INET, SOCK_STREAM, 0);
     if(listenFd_ < 0) {
         //std::cout<<"Create socket error!"<<std::endl;
         return false;
     }
 
+    // 套接字设置优雅关闭
     ret = setsockopt(listenFd_, SOL_SOCKET, SO_LINGER, &optLinger, sizeof(optLinger));
     if(ret < 0) {
         close(listenFd_);
@@ -246,6 +287,7 @@ bool WebServer::initSocket_() {
     int optval = 1;
     /* 端口复用 */
     /* 只有最后一个套接字会正常接收数据。 */
+    // 套接字设置端口复用（端口处于TIME_WAIT时，也可以被bind）
     ret = setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, (const void*)&optval, sizeof(int));
     if(ret == -1) {
         //std::cout<<"set socket setsockopt error !"<<std::endl;
@@ -253,6 +295,7 @@ bool WebServer::initSocket_() {
         return false;
     }
 
+    // 套接字绑定端口
     ret = bind(listenFd_, (struct sockaddr *)&addr, sizeof(addr));
     if(ret < 0) {
         //std::cout<<"Bind Port"<<port_<<" error!"<<std::endl;
@@ -260,23 +303,28 @@ bool WebServer::initSocket_() {
         return false;
     }
 
+    // 套接字设为可接受连接状态，并指明请求队列大小
     ret = listen(listenFd_, 6);
     if(ret < 0) {
         //printf("Listen port:%d error!\n", port_);
         close(listenFd_);
         return false;
     }
+
+    // 向epoll注册监听套接字连接事件
     ret = epoller_->addFd(listenFd_,  listenEvent_ | EPOLLIN);
     if(ret == 0) {
         //printf("Add listen error!\n");
         close(listenFd_);
         return false;
     }
+    // 套接字设置非阻塞（优雅关闭还是会导致close阻塞）
     setFdNonblock(listenFd_);
     //printf("Server port:%d\n", port_);
     return true;
 }
 
+/* 套接字设置非阻塞 */
 int WebServer::setFdNonblock(int fd) {
     assert(fd > 0);
     return fcntl(fd, F_SETFL, fcntl(fd, F_GETFD, 0) | O_NONBLOCK);

@@ -61,10 +61,11 @@ void HTTPresponse::init(const std::string& srcDir, std::string& path, bool isKee
 }
 
 void HTTPresponse::makeResponse(Buffer& buff) {
-    /* 判断请求的资源文件 */
+    /* 判断请求的资源文件是否存在 */
     if(stat((srcDir_ + path_).data(), &mmFileStat_) < 0 || S_ISDIR(mmFileStat_.st_mode)) {
         code_ = 404;
     }
+    // 查文件的权限是否可以读取
     else if(!(mmFileStat_.st_mode & S_IROTH)) {
         code_ = 403;
     }
@@ -77,6 +78,7 @@ void HTTPresponse::makeResponse(Buffer& buff) {
     addResponseContent_(buff);
 }
 
+/* 获取映射好的文件 */
 char* HTTPresponse::file() {
     return mmFile_;
 }
@@ -134,6 +136,7 @@ void HTTPresponse::addResponseContent_(Buffer& buff) {
     buff.append("Content-length: " + std::to_string(mmFileStat_.st_size) + "\r\n\r\n");
 }
 
+/* 解除文件映射 */
 void HTTPresponse::unmapFile_() {
     if(mmFile_) {
         munmap(mmFile_, mmFileStat_.st_size);
@@ -154,6 +157,7 @@ std::string HTTPresponse::getFileType_() {
     return "text/plain";
 }
 
+/* 范围外错误页面 */
 void HTTPresponse::errorContent(Buffer& buff, std::string message) 
 {
     std::string body;

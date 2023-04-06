@@ -52,8 +52,9 @@ private:
     void parseRequestHeader_(const std::string& line); //解析请求头
     void parseDataBody_(const std::string& line); //解析数据体
 
-
+    // 在解析请求行的时候，会解析出路径信息，之后还需要对路径信息做一个处理
     void parsePath_();
+    // 在处理数据体的时候，如果格式是 post，那么还需要解析 post 报文
     void parsePost_();
 
     static int convertHex(char ch);
@@ -64,13 +65,17 @@ private:
     std::unordered_map<std::string,std::string>post_;
 
     static const std::unordered_set<std::string>DEFAULT_HTML;
-   
-
-
 };
 
-
-
-
-
 #endif  //HTTP_REQUEST_H
+
+/* request example
+GET /mix/76.html?name=kelvin&password=123456 HTTP/1.1
+Host: www.baidu.com
+Connection: keep-alive
+Upgrade-Insecure-Requests: 1
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,* /*;q=0.8
+Accept-Encoding: gzip, deflate, sdch
+Accept-Language: zh-CN,zh;q=0.8,en;q=0.6
+*/

@@ -2,6 +2,19 @@
 
 #include "timer.h"
 
+/* 数组模拟堆
+堆是一个完全二叉树，每个点都小于等于左右结点，根结点也即堆顶上全部数据的最小值（小根堆）
+如果用0号作为根结点，那么结点x的左结点是 2x+1，右结点是2x+2
+那么结点x的父结点就是 (x-1)/2
+swap操作：交换两个结点，同时更新哈希表内每个定时器的下标
+down操作：比左或右结点大，与左右结点的最小值交换
+up操作：比父结点小，与父结点交换
+我们的需求有以下几个：
+增加定时器：查哈希表，如果是新定时器，插在最后，再up，如果不是新定时器，就需要调整定时器
+调整定时器：更新定时后，再执行down和up（实际上只会执行一个）
+删除定时器：与最后一个元素交换，删除末尾元素，然后再down和up（删除任意位置结点，同样也只会执行一个）
+*/
+
 void TimerManager::siftup_(size_t i) {
     assert(i >= 0 && i < heap_.size());
     size_t j = (i - 1) / 2;
@@ -119,9 +132,11 @@ void TimerManager::clear() {
 }
 
 int TimerManager::getNextHandle() {
+    // 处理堆顶计时器，若超时执行回调再删除
     handle_expired_event();
     size_t res = -1;
     if(!heap_.empty()) {
+        // 计算现在堆顶的超时时间，到期时先唤醒一次epoll，判断是否有新事件（即便已经超时）
         res = std::chrono::duration_cast<MS>(heap_.front().expire - Clock::now()).count();
         if(res < 0) { res = 0; }
     }
